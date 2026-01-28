@@ -25,7 +25,6 @@ import {
   type Message,
   type MessageWithMetadata,
   type Usage,
-  type vContent,
   type vFilePart,
   type vImagePart,
   type vReasoningPart,
@@ -47,8 +46,6 @@ import {
   convertUint8ArrayToBase64,
   type ProviderOptions,
   type ReasoningPart,
-  type ToolApprovalRequest,
-  type ToolApprovalResponse,
 } from "@ai-sdk/provider-utils";
 import { parse, validate } from "convex-helpers/validators";
 import {
@@ -159,8 +156,17 @@ export function toModelMessageUsage(usage: Usage): LanguageModelUsage {
     totalTokens: usage.totalTokens,
     reasoningTokens: usage.reasoningTokens,
     cachedInputTokens: usage.cachedInputTokens,
-    inputTokenDetails: {} as any,
-    outputTokenDetails: {} as any,
+    // These detail fields are required by LanguageModelUsage type but we don't
+    // have the granular data, so we provide empty objects with undefined values.
+    inputTokenDetails: {
+      cacheReadTokens: undefined,
+      cacheWriteTokens: undefined,
+      noCacheTokens: undefined,
+    },
+    outputTokenDetails: {
+      textTokens: undefined,
+      reasoningTokens: undefined,
+    },
   };
 }
 
@@ -577,21 +583,12 @@ export function toModelMessageContent(
         case "source":
           return part satisfies SourcePart;
         case "tool-approval-request":
-          return {
-            type: part.type,
-            approvalId: part.approvalId,
-            toolCallId: part.toolCallId,
-            ...metadata,
-          } satisfies ToolApprovalRequest;
         case "tool-approval-response":
-          return {
-            type: part.type,
-            approvalId: part.approvalId,
-            approved: part.approved,
-            reason: part.reason,
-            providerExecuted: part.providerExecuted,
-            ...metadata,
-          } satisfies ToolApprovalResponse;
+          // Filter out approval parts - providers like Anthropic don't understand these
+          // and will error if they are included in messages sent to the API.
+          // The approval data is preserved in storage and extracted for UI rendering
+          // directly from message.message.content before toModelMessage is called.
+          return null;
         default:
           return null;
       }
@@ -624,13 +621,24 @@ function normalizeToolResult(
     providerMetadata?: ProviderMetadata;
   },
 ): ToolResultPart & Infer<typeof vToolResultPart> {
+  let output = part.output
+    ? normalizeToolOutput(part.output as any)
+    : normalizeToolOutput("result" in part ? part.result : undefined);
+
+  // Convert execution-denied to text format for provider compatibility
+  // Anthropic and other providers don't understand the execution-denied type
+  if (output?.type === "execution-denied") {
+    output = {
+      type: "text",
+      value:
+        (output as { reason?: string }).reason ??
+        "Tool execution was denied by the user",
+    };
+  }
+
   return {
     type: part.type,
-    output: part.output
-      ? validate(vToolResultOutput, part.output)
-        ? (part.output as any)
-        : normalizeToolOutput(JSON.stringify(part.output))
-      : normalizeToolOutput("result" in part ? part.result : undefined),
+    output,
     toolCallId: part.toolCallId,
     toolName: part.toolName,
     // Preserve isError flag for error reporting

@@ -39,7 +39,8 @@
   },
   "files": [
     "dist",
-    "src"
+    "src",
+    "MIGRATION.md"
   ],
   "exports": {
     "./package.json": "./package.json",
@@ -86,7 +87,7 @@
     "@ai-sdk/openai": "^3.0.10",
     "@ai-sdk/provider": "^3.0.3",
     "@ai-sdk/provider-utils": "^4.0.6",
-    "@convex-dev/rag": "0.6.1",
+    "@convex-dev/rag": "0.7.0",
     "@convex-dev/rate-limiter": "0.3.0",
     "@convex-dev/workflow": "0.3.2",
     "@edge-runtime/vm": "5.0.0",
@@ -109,7 +110,7 @@
     "chokidar-cli": "3.0.0",
     "class-variance-authority": "0.7.1",
     "clsx": "2.1.1",
-    "convex": "1.29.3",
+    "convex": "^1.31.6",
     "convex-helpers": "0.1.104",
     "convex-test": "0.0.38",
     "cpy-cli": "5.0.0",

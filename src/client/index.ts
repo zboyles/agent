@@ -3,6 +3,7 @@ import type {
   FlexibleSchema,
   IdGenerator,
   InferSchema,
+  ToolContent,
 } from "@ai-sdk/provider-utils";
 import type {
   CallSettings,
@@ -11,13 +12,25 @@ import type {
   GenerateTextResult,
   LanguageModel,
   ModelMessage,
+  StaticToolError,
+  StaticToolResult,
   StepResult,
   StopCondition,
   StreamTextResult,
+  Tool,
   ToolChoice,
   ToolSet,
 } from "ai";
 import { generateObject, generateText, stepCountIs, streamObject } from "ai";
+
+const MIGRATION_URL = "node_modules/@convex-dev/agent/MIGRATION.md";
+const warnedDeprecations = new Set<string>();
+function warnDeprecation(key: string, message: string) {
+  if (!warnedDeprecations.has(key)) {
+    warnedDeprecations.add(key);
+    console.warn(`[@convex-dev/agent] ${message}\n  See: ${MIGRATION_URL}`);
+  }
+}
 import { assert, omit, pick } from "convex-helpers";
 import {
   internalActionGeneric,
@@ -37,7 +50,11 @@ import {
   serializeNewMessagesInStep,
   serializeObjectResult,
 } from "../mapping.js";
-import { getModelName, getProviderName } from "../shared.js";
+import {
+  createToolModelOutput,
+  getModelName,
+  getProviderName,
+} from "../shared.js";
 import {
   vMessageEmbeddings,
   vMessageWithMetadata,
@@ -243,7 +260,14 @@ export class Agent<
         | StopCondition<NoInfer<AgentTools>>
         | Array<StopCondition<NoInfer<AgentTools>>>;
     },
-  ) {}
+  ) {
+    if (this.options.textEmbeddingModel && !this.options.embeddingModel) {
+      warnDeprecation(
+        "textEmbeddingModel",
+        "textEmbeddingModel is deprecated. Use embeddingModel instead.",
+      );
+    }
+  }
 
   /**
    * Get the embedding model, prioritizing embeddingModel over textEmbeddingModel.
@@ -1491,5 +1515,348 @@ export class Agent<
         };
       },
     });
+  }
+
+  /**
+   * Approve a pending tool call and continue generation.
+   *
+   * This is a helper for the AI SDK v6 tool approval workflow. When a tool
+   * with `needsApproval: true` is called, it returns a `tool-approval-request`.
+   * Call this method to approve the tool, execute it, and continue generation.
+   *
+   * @param ctx - The action context, optionally extended with custom context.
+   * @param threadOpts - Thread options.
+   * @param threadOpts.userId - Optional user ID to associate with the tool execution.
+   * @param threadOpts.threadId - The thread containing the pending tool call.
+   * @param approvalArgs - Approval response details.
+   * @param approvalArgs.approvalId - The approval ID from the `tool-approval-request` content part.
+   * @param approvalArgs.reason - Optional reason for approving the tool call.
+   * @param streamTextArgs - Arguments for continuing text generation after tool execution.
+   *   Similar to the AI SDK's `streamText` function, along with Agent prompt options.
+   *   Note: `promptMessageId` and `forceNewOrder` will be overridden internally.
+   * @param options - Optional context, storage, and streaming configuration.
+   * @param options.saveStreamDeltas - Whether to save incremental streaming data.
+   *   Defaults to `{ chunking: "word", throttleMs: 100 }`.
+   * @returns The streaming text result with generation output metadata.
+   */
+  async approveToolCall(
+    ctx: ActionCtx & CustomCtx,
+    {
+      userId,
+      threadId,
+    }: {
+      userId?: string | null;
+      threadId: string;
+    },
+    approvalArgs: {
+      approvalId: string;
+      reason?: string;
+    },
+    /**
+     * The arguments to the streamText function, similar to the ai sdk's
+     * {@link streamText} function, along with Agent prompt options.
+     *
+     * * `promptMessageId` & `forceNewOrder` will be overridden by the approval tool call
+     */
+    streamTextArgs?: AgentPrompt &
+      StreamingTextArgs<AgentTools extends undefined ? AgentTools : AgentTools>,
+    /**
+     * The {@link ContextOptions} and {@link StorageOptions}
+     * options to use for fetching contextual messages and saving input/output messages.
+     */
+    options?: Options & {
+      /**
+       * Whether to save incremental data (deltas) from streaming responses.
+       * Defaults to `{ chunking: "word", throttleMs: 100 }`.
+       * If false, it will not save any deltas to the database.
+       * If true, it will save deltas with {@link DEFAULT_STREAMING_OPTIONS}.
+       */
+      saveStreamDeltas?: boolean | StreamingOptions;
+    },
+  ): Promise<
+    StreamTextResult<
+      AgentTools extends undefined ? AgentTools : AgentTools,
+      never
+    > &
+      GenerationOutputMetadata
+  > {
+    const { approvalId, reason } = approvalArgs;
+    const toolInfo = await this._findToolCallInfo(ctx, threadId, approvalId);
+
+    if (!toolInfo) {
+      throw new Error(
+        `Could not find tool call for approval ID: ${approvalId}`,
+      );
+    }
+
+    if (toolInfo.alreadyHandled) {
+      if (toolInfo.wasApproved) {
+        throw new Error(
+          `Tool call was already approved for approval ID: ${approvalId}`,
+        );
+      }
+      throw new Error(
+        `Cannot approve tool call that was already denied for approval ID: ${approvalId}`,
+      );
+    }
+
+    const { toolCallId, toolName, toolInput, parentMessageId } = toolInfo;
+
+    // Execute the tool
+    const tools = this.options.tools;
+    const tool = tools?.[toolName] as Tool<
+      any,
+      StaticToolResult<AgentTools> | StaticToolError<AgentTools>
+    >;
+    if (!tool) {
+      throw new Error(`Tool not found: ${toolName}`);
+    }
+
+    // Get thread metadata to propagate userId to tool context if needed
+    if (!userId) {
+      ({ userId } = await this.getThreadMetadata(ctx, { threadId }));
+    }
+
+    const toolResult: ToolContent = [
+      {
+        type: "tool-approval-response" as const,
+        approvalId,
+        approved: true,
+        reason,
+      },
+    ];
+    try {
+      // Execute with context injection (like wrapTools does)
+      const toolCtx = {
+        ...ctx,
+        userId,
+        threadId,
+        agent: this,
+      };
+      const wrappedTool = (tool as any).__acceptsCtx
+        ? { ...tool, ctx: toolCtx }
+        : tool;
+      const output = await wrappedTool.execute?.call(wrappedTool, toolInput, {
+        toolCallId,
+        messages: [],
+      });
+      toolResult.push({
+        type: "tool-result" as const,
+        toolCallId,
+        toolName,
+        output: await createToolModelOutput({
+          toolCallId,
+          input: toolInput,
+          tool: tool,
+          output: output,
+          errorMode: "none",
+        }),
+      });
+    } catch (error) {
+      toolResult.push({
+        type: "tool-result" as const,
+        toolCallId,
+        toolName,
+        output: {
+          type: "error-text",
+          value: error instanceof Error ? error.message : String(error),
+        },
+      });
+      console.error("Tool execution error:", error);
+    }
+
+    // Save approval response and tool result together
+    const { messageId: toolResultId } = await this.saveMessage(ctx, {
+      threadId,
+      promptMessageId: parentMessageId,
+      message: {
+        role: "tool",
+        content: toolResult,
+      },
+      skipEmbeddings: true,
+    });
+
+    // Continue generation with forceNewOrder to create a separate message
+    return this.streamText<AgentTools>(
+      ctx,
+      { threadId },
+      { ...streamTextArgs, promptMessageId: toolResultId, forceNewOrder: true },
+      {
+        ...options,
+        saveStreamDeltas: options?.saveStreamDeltas
+          ? options.saveStreamDeltas
+          : { chunking: "word", throttleMs: 100 },
+      },
+    );
+  }
+
+  /**
+   * Deny a pending tool call and continue generation.
+   *
+   * This is a helper for the AI SDK v6 tool approval workflow. When a tool
+   * with `needsApproval: true` is called, it returns a `tool-approval-request`.
+   * Call this method to deny the tool and let the LLM respond to the denial.
+   *
+   * @param ctx The context from an action.
+   * @param args.threadId The thread containing the tool call.
+   * @param args.approvalId The approval ID from the tool-approval-request.
+   * @param args.reason Optional reason for the denial.
+   * @returns The result of the continued generation.
+   */
+  async denyToolCall(
+    ctx: ActionCtx & CustomCtx,
+    args: {
+      threadId: string;
+      approvalId: string;
+      reason?: string;
+    },
+  ): Promise<StreamTextResult<ToolSet, never> & GenerationOutputMetadata> {
+    const { threadId, approvalId, reason } = args;
+    const toolInfo = await this._findToolCallInfo(ctx, threadId, approvalId);
+
+    if (!toolInfo) {
+      throw new Error(`Could not find tool call for approval ID: ${approvalId}`);
+    }
+
+    if (toolInfo.alreadyHandled) {
+      if (!toolInfo.wasApproved) {
+        throw new Error(
+          `Tool call was already denied for approval ID: ${approvalId}`,
+        );
+      }
+      throw new Error(
+        `Cannot deny tool call that was already approved for approval ID: ${approvalId}`,
+      );
+    }
+
+    const { toolCallId, toolName, parentMessageId } = toolInfo;
+    const denialReason = reason ?? "Tool execution was denied by the user";
+
+    // Save approval response (denied) and tool result with execution-denied
+    const { messageId: toolResultId } = await this.saveMessage(ctx, {
+      threadId,
+      promptMessageId: parentMessageId,
+      message: {
+        role: "tool",
+        content: [
+          {
+            type: "tool-approval-response",
+            approvalId,
+            approved: false,
+            reason: denialReason,
+          },
+          {
+            type: "tool-result",
+            toolCallId,
+            toolName,
+            output: {
+              type: "execution-denied",
+              reason: denialReason,
+            },
+          },
+        ],
+      },
+      skipEmbeddings: true,
+    });
+
+    // Continue generation with forceNewOrder to create a separate message
+    return this.streamText(
+      ctx,
+      { threadId },
+      { promptMessageId: toolResultId, forceNewOrder: true },
+      { saveStreamDeltas: { chunking: "word", throttleMs: 100 } },
+    );
+  }
+
+  /**
+   * Find tool call information for an approval ID.
+   * Returns either:
+   * - Tool info if approval is pending
+   * - { alreadyHandled: true, wasApproved } if already approved/denied
+   * - null if approval request not found
+   * @internal
+   */
+  private async _findToolCallInfo(
+    ctx: ActionCtx,
+    threadId: string,
+    approvalId: string,
+  ): Promise<
+    | {
+        toolCallId: string;
+        toolName: string;
+        toolInput: Record<string, unknown>;
+        parentMessageId: string;
+        alreadyHandled?: false;
+      }
+    | { alreadyHandled: true; wasApproved: boolean }
+    | null
+  > {
+    const messagesResult = await this.listMessages(ctx, {
+      threadId,
+      paginationOpts: { numItems: 20, cursor: null },
+    });
+
+    let toolCallId: string | undefined;
+    let parentMessageId: string | undefined;
+    let toolName: string | undefined;
+    let toolInput: Record<string, unknown> | undefined;
+
+    // First, check if this approval has already been handled
+    for (const msg of messagesResult.page) {
+      if (msg.message?.role === "tool" && Array.isArray(msg.message.content)) {
+        for (const part of msg.message.content) {
+          if (
+            part.type === "tool-approval-response" &&
+            (part as any).approvalId === approvalId
+          ) {
+            return { alreadyHandled: true, wasApproved: (part as any).approved === true };
+          }
+        }
+      }
+    }
+
+    // Second pass: find the approval request to get toolCallId and parent message
+    for (const msg of messagesResult.page) {
+      if (msg.message?.role === "assistant" && Array.isArray(msg.message.content)) {
+        for (const part of msg.message.content) {
+          if (
+            part.type === "tool-approval-request" &&
+            (part as any).approvalId === approvalId
+          ) {
+            parentMessageId = msg._id;
+            toolCallId = (part as any).toolCallId;
+            break;
+          }
+        }
+      }
+      if (toolCallId) break;
+    }
+
+    if (!toolCallId || !parentMessageId) {
+      return null;
+    }
+
+    // Third pass: find the tool-call with matching toolCallId to get toolName and input
+    for (const msg of messagesResult.page) {
+      if (msg.message?.role === "assistant" && Array.isArray(msg.message.content)) {
+        for (const part of msg.message.content) {
+          if (
+            part.type === "tool-call" &&
+            (part as any).toolCallId === toolCallId
+          ) {
+            toolName = (part as any).toolName;
+            toolInput = (part as any).input ?? (part as any).args ?? {};
+            break;
+          }
+        }
+      }
+      if (toolName) break;
+    }
+
+    if (!toolName || !toolInput) {
+      return null;
+    }
+
+    return { toolCallId, toolName, toolInput, parentMessageId };
   }
 }

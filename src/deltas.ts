@@ -124,7 +124,6 @@ export async function deriveUIMessagesFromDeltas(
         blankUIMessage(streamMessage, threadId),
         parts,
       );
-      // TODO: this fails on partial tool calls
       messages.push(uiMessage);
     } else {
       const [uiMessages] = deriveUIMessagesFromTextStreamParts(
@@ -519,7 +518,9 @@ export function updateFromTextStreamParts(
         // ignore
         break;
       default: {
-        // Should never happen
+        // Exhaustiveness check disabled intentionally for forwards compatibility.
+        // New TextStreamPart types from future AI SDK versions will trigger a
+        // runtime warning rather than a compile error, allowing graceful degradation.
         // const _: never = part;
         console.warn(`Received unexpected part: ${JSON.stringify(part)}`);
         break;
