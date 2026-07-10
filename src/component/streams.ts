@@ -221,7 +221,7 @@ async function cleanupTimeoutFn(
   stream: Doc<"streamingMessages">,
 ) {
   if (stream.state.kind === "streaming" && stream.state.timeoutFnId) {
-    const timeoutFn = await ctx.db.instructions.get(
+    const timeoutFn = await ctx.db.system.get(
       "_scheduled_functions",
       stream.state.timeoutFnId,
     );
@@ -299,7 +299,7 @@ async function heartbeatStream(
   if (!stream.state.timeoutFnId) {
     throw new Error("Stream has no timeout function");
   }
-  const timeoutFn = await ctx.db.instructions.get(
+  const timeoutFn = await ctx.db.system.get(
     "_scheduled_functions",
     stream.state.timeoutFnId,
   );
@@ -354,7 +354,7 @@ async function deletePageForStreamId(
     if (stream) {
       await cleanupTimeoutFn(ctx, stream);
       if (stream.state.kind === "finished" && stream.state.cleanupFnId) {
-        const scheduledFunction = await ctx.db.instructions.get(
+        const scheduledFunction = await ctx.db.system.get(
           "_scheduled_functions",
           stream.state.cleanupFnId,
         );

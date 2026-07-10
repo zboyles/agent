@@ -235,8 +235,8 @@ export function serializeUsage(usage: LanguageModelUsage): Usage {
     promptTokens: usage.inputTokens ?? 0,
     completionTokens: usage.outputTokens ?? 0,
     totalTokens: usage.totalTokens ?? 0,
-    reasoningTokens: usage.outputTokenDetails.reasoningTokens,
-    cachedInputTokens: usage.inputTokenDetails.cacheReadTokens,
+    reasoningTokens: usage.outputTokenDetails?.reasoningTokens,
+    cachedInputTokens: usage.inputTokenDetails?.cacheReadTokens,
   };
 }
 
@@ -245,18 +245,14 @@ export function toModelMessageUsage(usage: Usage): LanguageModelUsage {
     inputTokens: usage.promptTokens,
     outputTokens: usage.completionTokens,
     totalTokens: usage.totalTokens,
-    reasoningTokens: usage.outputTokenDetails.reasoningTokens,
-    cachedInputTokens: usage.inputTokenDetails.cacheReadTokens,
-    // These detail fields are required by LanguageModelUsage type but we don't
-    // have the granular data, so we provide empty objects with undefined values.
     inputTokenDetails: {
-      cacheReadTokens: undefined,
+      cacheReadTokens: usage.cachedInputTokens,
       cacheWriteTokens: undefined,
       noCacheTokens: undefined,
     },
     outputTokenDetails: {
       textTokens: undefined,
-      reasoningTokens: undefined,
+      reasoningTokens: usage.reasoningTokens,
     },
   };
 }
@@ -355,7 +351,9 @@ async function serializeStepMessages<TOOLS extends ToolSet>(
     provider: model ? getProviderName(model) : undefined,
     providerMetadata: step.providerMetadata,
     reasoning: step.reasoningText,
-    reasoningDetails: step.reasoning,
+    reasoningDetails: step.reasoning?.filter(
+      (part) => part.type !== "reasoning-file",
+    ) as any,
     usage: serializeUsage(step.usage),
     warnings: serializeWarnings(step.warnings),
     finishReason: step.finishReason,
@@ -738,7 +736,7 @@ export function toModelMessageContent(
 
 export function normalizeToolOutput(
   result: string | JSONValue | undefined,
-): ToolResultPart["output"] {
+): any {
   if (typeof result === "string") {
     return {
       type: "text",
@@ -773,7 +771,7 @@ function normalizeToolResult(
     // Preserve isError flag for error reporting
     ...("isError" in part && part.isError ? { isError: true } : {}),
     ...metadata,
-  } satisfies ToolResultPart;
+  } as ToolResultPart & Infer<typeof vToolResultPart>;
 }
 
 /**
@@ -849,7 +847,7 @@ export function guessMimeType(buf: ArrayBuffer | string): string {
  * @returns The serialized data as an ArrayBuffer or the URL as a string.
  */
 export function serializeDataOrUrl(
-  dataOrUrl: DataContent | URL,
+  dataOrUrl: DataContent | URL | unknown,
 ): ArrayBuffer | string {
   if (typeof dataOrUrl === "string") {
     return dataOrUrl;
@@ -860,19 +858,43 @@ export function serializeDataOrUrl(
   if (dataOrUrl instanceof URL) {
     return dataOrUrl.toString();
   }
-  return dataOrUrl.buffer.slice(
-    dataOrUrl.byteOffset,
-    dataOrUrl.byteOffset + dataOrUrl.byteLength,
+  if (typeof dataOrUrl === "object" && dataOrUrl !== null && "type" in dataOrUrl) {
+    const fileData = dataOrUrl as any;
+    if (fileData.type === "data" && "data" in fileData) {
+      return serializeDataOrUrl(fileData.data as DataContent);
+    }
+    if (fileData.type === "url" && typeof fileData.url === "string") {
+      return fileData.url;
+    }
+    if (fileData.type === "text" && typeof fileData.text === "string") {
+      return fileData.text;
+    }
+    if (fileData.type === "reference" && "reference" in fileData) {
+      return `provider-ref:${JSON.stringify(fileData.reference)}`;
+    }
+  }
+  if (typeof dataOrUrl === "object" && dataOrUrl !== null && !("buffer" in (dataOrUrl as any))) {
+    return `provider-ref:${JSON.stringify(dataOrUrl)}`;
+  }
+  const bytes = dataOrUrl as Uint8Array;
+  return bytes.buffer.slice(
+    bytes.byteOffset,
+    bytes.byteOffset + bytes.byteLength,
   ) as ArrayBuffer;
 }
 
 export function toModelMessageDataOrUrl(
-  urlOrString: string | ArrayBuffer | URL | DataContent,
-): URL | DataContent {
+  urlOrString: any,
+): any {
   if (urlOrString instanceof URL) {
     return urlOrString;
   }
   if (typeof urlOrString === "string") {
+    if (urlOrString.startsWith("provider-ref:")) {
+      return JSON.parse(
+        urlOrString.slice("provider-ref:".length),
+      ) as Record<string, string>;
+    }
     if (
       urlOrString.startsWith("http://") ||
       urlOrString.startsWith("https://")

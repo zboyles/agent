@@ -3,6 +3,7 @@ import type {
   InferSchema,
   ModelMessage,
   ProviderOptions,
+  Context,
 } from "@ai-sdk/provider-utils";
 import type { JSONValue } from "@ai-sdk/provider";
 import type {
@@ -20,7 +21,7 @@ import type {
   ToolSet,
   LanguageModelCallOptions,
   generateObject,
-  type RequestOptions,
+  RequestOptions,
 } from "ai";
 
 export interface Output<_T = any, _P = any, _E = any> {
@@ -51,7 +52,7 @@ import type { ComponentApi } from "../component/_generated/component.js";
  */
 type AssertAISDKv6<T> = T extends { specificationVersion: "v3" }
   ? T
-  : "⚠️ @convex-dev/agent v0.6.0 requires AI SDK v6. Update your dependencies: npm install ai@^6.0.35 @ai-sdk/openai@^3.0.10 (or other provider). See: node_modules/@convex-dev/agent/MIGRATION.md";
+  : "⚠️ @convex-dev/agent requires AI SDK v7-compatible models (specificationVersion: v3). Update `ai` and provider packages. See: node_modules/@convex-dev/agent/MIGRATION.md";
 
 export type AgentPrompt = {
   /**
@@ -343,7 +344,9 @@ export type RawRequestResponseHandler = (
     threadId: string | undefined;
     agentName: string | undefined;
     request: LanguageModelRequestMetadata;
-    response: LanguageModelResponseMetadata;
+    response:
+      | LanguageModelResponseMetadata
+      | Omit<LanguageModelResponseMetadata, "messages">;
   },
 ) => void | Promise<void>;
 
@@ -355,7 +358,11 @@ export type TextArgs<
   OUTPUT extends Output<any, any, any> = never,
 > = Omit<
   Parameters<
-    typeof generateText<TOOLS extends undefined ? AgentTools : TOOLS, OUTPUT>
+    typeof generateText<
+      TOOLS extends undefined ? AgentTools : TOOLS,
+      Context,
+      OUTPUT
+    >
   >[0],
   "model" | "prompt" | "messages"
 > & {
@@ -372,7 +379,11 @@ export type StreamingTextArgs<
   OUTPUT extends Output<any, any, any> = never,
 > = Omit<
   Parameters<
-    typeof streamText<TOOLS extends undefined ? AgentTools : TOOLS, OUTPUT>
+    typeof streamText<
+      TOOLS extends undefined ? AgentTools : TOOLS,
+      Context,
+      OUTPUT
+    >
   >[0],
   "model" | "prompt" | "messages"
 > & {
@@ -492,7 +503,11 @@ export interface Thread<DefaultTools extends ToolSet> {
       TextArgs<TOOLS extends undefined ? DefaultTools : TOOLS, TOOLS, OUTPUT>,
     options?: Options,
   ): Promise<
-    GenerateTextResult<TOOLS extends undefined ? DefaultTools : TOOLS, OUTPUT> &
+    GenerateTextResult<
+      TOOLS extends undefined ? DefaultTools : TOOLS,
+      Context,
+      OUTPUT
+    > &
       ThreadOutputMetadata
   >;
 
@@ -530,7 +545,11 @@ export interface Thread<DefaultTools extends ToolSet> {
       saveStreamDeltas?: boolean | StreamingOptions;
     },
   ): Promise<
-    StreamTextResult<TOOLS extends undefined ? DefaultTools : TOOLS, OUTPUT> &
+    StreamTextResult<
+      TOOLS extends undefined ? DefaultTools : TOOLS,
+      Context,
+      OUTPUT
+    > &
       ThreadOutputMetadata
   >;
   /**

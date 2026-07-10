@@ -63,7 +63,7 @@ export type ToolExecuteFunctionCtx<
 > = (
   ctx: Ctx,
   input: INPUT,
-  options: ToolExecutionOptions,
+  options: ToolExecutionOptions<any>,
 ) => AsyncIterable<OUTPUT> | PromiseLike<OUTPUT>;
 
 type NeverOptional<N, T> = 0 extends 1 & N
@@ -186,7 +186,7 @@ export function createTool<INPUT, OUTPUT, Ctx extends ToolCtx = ToolCtx>(
        */
       onInputStart?: (
         ctx: Ctx,
-        options: ToolExecutionOptions,
+        options: ToolExecutionOptions<any>,
       ) => void | PromiseLike<void>;
       /**
        * Optional function that is called when an argument streaming delta is available.
@@ -194,7 +194,7 @@ export function createTool<INPUT, OUTPUT, Ctx extends ToolCtx = ToolCtx>(
        */
       onInputDelta?: (
         ctx: Ctx,
-        options: { inputTextDelta: string } & ToolExecutionOptions,
+        options: { inputTextDelta: string } & ToolExecutionOptions<any>,
       ) => void | PromiseLike<void>;
       /**
        * Optional function that is called when a tool call can be started,
@@ -204,7 +204,7 @@ export function createTool<INPUT, OUTPUT, Ctx extends ToolCtx = ToolCtx>(
         ctx: Ctx,
         options: {
           input: [INPUT] extends [never] ? unknown : INPUT;
-        } & ToolExecutionOptions,
+        } & ToolExecutionOptions<any>,
       ) => void | PromiseLike<void>;
     } & ToolOutputPropertiesCtx<INPUT, OUTPUT, Ctx> & {
       /**
@@ -260,7 +260,7 @@ export function createTool<INPUT, OUTPUT, Ctx extends ToolCtx = ToolCtx>(
         " handler function, define an outputSchema, or both",
     );
 
-  const t = tool<INPUT, OUTPUT>({
+  const t = tool<INPUT, OUTPUT, any>({
     type: "function",
     __acceptsCtx: true,
     ctx: def.ctx,
@@ -269,7 +269,7 @@ export function createTool<INPUT, OUTPUT, Ctx extends ToolCtx = ToolCtx>(
     providerOptions: def.providerOptions,
     inputSchema,
     inputExamples: def.inputExamples,
-    needsApproval(this: Tool<INPUT, OUTPUT>, input, options) {
+    needsApproval(this: Tool<INPUT, OUTPUT>, input: any, options: any) {
       const needsApproval = def.needsApproval;
       if (!needsApproval || typeof needsApproval === "boolean")
         return Boolean(needsApproval);
@@ -281,7 +281,7 @@ export function createTool<INPUT, OUTPUT, Ctx extends ToolCtx = ToolCtx>(
             " call it (which injects the ctx, userId and threadId)",
         );
       }
-      return needsApproval(getCtx(this), input, options);
+      return needsApproval(getCtx(this), input as any, options);
     },
     strict: def.strict,
     ...(executeHandler
@@ -289,7 +289,7 @@ export function createTool<INPUT, OUTPUT, Ctx extends ToolCtx = ToolCtx>(
           execute(
             this: Tool<INPUT, OUTPUT>,
             input: INPUT,
-            options: ToolExecutionOptions,
+            options: ToolExecutionOptions<any>,
           ) {
             if (!getCtx(this)) {
               throw new Error(
@@ -303,7 +303,7 @@ export function createTool<INPUT, OUTPUT, Ctx extends ToolCtx = ToolCtx>(
         }
       : {}),
     outputSchema: def.outputSchema,
-  });
+  } as any);
   if (def.onInputStart) {
     const origOnInputStart = def.onInputStart;
     t.onInputStart = function (this: Tool<INPUT, OUTPUT>, options) {
@@ -328,7 +328,7 @@ export function createTool<INPUT, OUTPUT, Ctx extends ToolCtx = ToolCtx>(
       return origToModelOutput.call(this, getCtx(this), options);
     };
   }
-  return t;
+  return t as Tool<INPUT, OUTPUT>;
 }
 
 function getCtx<Ctx extends ToolCtx>(tool: any): Ctx {
@@ -348,8 +348,7 @@ export function wrapTools(
       if (tool && !(tool as any).__acceptsCtx) {
         output[name] = tool;
       } else {
-        const out = { ...tool, ctx };
-        output[name] = out;
+        output[name] = Object.assign({}, tool, { ctx });
       }
     }
   }

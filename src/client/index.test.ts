@@ -260,13 +260,13 @@ describe("Agent thick client", () => {
     expect(toolCalls).toBe(1);
     expect(toolResults).toBe(1);
   });
-  test("saveStep without previousStep duplicates prior messages", async () => {
+  test("saveStep without previousStep does not duplicate prior messages", async () => {
     const t = initConvexTest(schema);
     const res = await t.action(testApi.replayStepsViaSaveStep, {
       withWatermark: false,
     });
     const toolCalls = res.contentTypes.filter((t) => t === "tool-call").length;
-    expect(toolCalls).toBeGreaterThan(1);
+    expect(toolCalls).toBe(1);
   });
 });
 

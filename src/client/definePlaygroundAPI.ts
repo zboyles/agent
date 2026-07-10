@@ -275,7 +275,7 @@ export function definePlaygroundAPI<DataModel extends GenericDataModel>(
         { threadId, userId },
         {
           ...rest,
-          ...(system ? { instructions } : {}),
+          ...(system ? { instructions: system } : {}),
           ...(messages ? { messages: messages.map(toModelMessage) } : {}),
         },
         { contextOptions, storageOptions, saveStreamDeltas: true },

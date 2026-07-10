@@ -432,12 +432,11 @@ describe("Tool Approval Workflow", () => {
     // Second call: tool-result + assistant text
     expect(result.secondSavedCount).toBeGreaterThanOrEqual(1);
     // Thread should have (ascending): user, assistant(tool-call+approval),
-    // tool(approval-response), tool(tool-result), assistant(text)
-    // listMessages returns descending order:
+    // tool(approval-response + tool-result), assistant(text)
+    // listMessages returns descending order.
     expect(result.threadMessageRoles).toEqual([
       "assistant", // final text
-      "tool", // tool-result
-      "tool", // approval-response
+      "tool", // approval-response + tool-result
       "assistant", // tool-call + approval-request
       "user", // prompt
     ]);
@@ -458,11 +457,10 @@ describe("Tool Approval Workflow", () => {
     expect(result.firstText).toBe("");
     expect(result.secondText).toBe("OK, I won't delete that file.");
     // Same message ordering as approve flow:
-    // user, assistant(tool-call+approval), tool(denial-response),
-    // tool(execution-denied result), assistant(text)
+    // user, assistant(tool-call+approval),
+    // tool(denial-response + execution-denied result), assistant(text)
     expect(result.threadMessageRoles).toEqual([
       "assistant",
-      "tool",
       "tool",
       "assistant",
       "user",
@@ -483,14 +481,12 @@ describe("Tool Approval Workflow", () => {
     expect(result.secondText).toBe(
       "Done! Deleted old.txt and renamed a.txt to b.txt.",
     );
-    // Both approval responses should be merged into one tool message
-    // (write-time merge in respondToToolCallApproval via findApprovalContext)
+    // Both approvals and tool results are persisted in one tool message.
     // Thread: user, assistant(2 tool-calls + 2 approvals),
-    //         tool(2 approval-responses merged), tool(2 tool-results), assistant(text)
+    //         tool(2 approval-responses + 2 tool-results), assistant(text)
     expect(result.threadMessageRoles).toEqual([
       "assistant", // final text
-      "tool", // tool-results
-      "tool", // approval-responses (merged)
+      "tool", // approval-responses + tool-results
       "assistant", // tool-calls + approval-requests
       "user", // prompt
     ]);

@@ -16,8 +16,9 @@ import type {
   StreamTextResult,
   ToolChoice,
   ToolSet,
-  type RequestOptions,
+  RequestOptions,
 } from "ai";
+import type { Context } from "@ai-sdk/provider-utils";
 import { generateObject, generateText, stepCountIs, streamObject } from "ai";
 
 const MIGRATION_URL = "node_modules/@convex-dev/agent/MIGRATION.md";
@@ -251,8 +252,8 @@ export class Agent<
        * determines when to stop. Defaults to the AI SDK default.
        */
       stopWhen?:
-        | StopCondition<NoInfer<AgentTools>>
-        | Array<StopCondition<NoInfer<AgentTools>>>;
+        | StopCondition<NoInfer<AgentTools>, Context>
+        | Array<StopCondition<NoInfer<AgentTools>, Context>>;
     },
   ) {
     if (this.options.textEmbeddingModel && !this.options.embeddingModel) {
@@ -481,7 +482,11 @@ export class Agent<
     generateTextArgs: AgentPrompt & TextArgs<AgentTools, TOOLS, OUTPUT>,
     options?: Options,
   ): Promise<
-    GenerateTextResult<TOOLS extends undefined ? AgentTools : TOOLS, OUTPUT> &
+    GenerateTextResult<
+      TOOLS extends undefined ? AgentTools : TOOLS,
+      Context,
+      OUTPUT
+    > &
       GenerationOutputMetadata
   > {
     const { args, promptMessageId, order, ...call } = await this.start(
@@ -491,9 +496,9 @@ export class Agent<
     );
 
     type Tools = TOOLS extends undefined ? AgentTools : TOOLS;
-    const steps: StepResult<Tools>[] = [];
+    const steps: StepResult<Tools, Context>[] = [];
     try {
-      const result = (await generateText<Tools, OUTPUT>({
+      const result = (await generateText<Tools, Context, OUTPUT>({
         ...args,
         prepareStep: async (options) => {
           const result = await generateTextArgs.prepareStep?.(options);
@@ -505,7 +510,7 @@ export class Agent<
           await call.save({ step }, await willContinue(steps, args.stopWhen));
           return generateTextArgs.onStepFinish?.(step);
         },
-      })) as GenerateTextResult<Tools, OUTPUT>;
+      })) as GenerateTextResult<Tools, Context, OUTPUT>;
       const metadata: GenerationOutputMetadata = {
         promptMessageId,
         order,
@@ -555,7 +560,11 @@ export class Agent<
       saveStreamDeltas?: boolean | StreamingOptions;
     },
   ): Promise<
-    StreamTextResult<TOOLS extends undefined ? AgentTools : TOOLS, OUTPUT> &
+    StreamTextResult<
+      TOOLS extends undefined ? AgentTools : TOOLS,
+      Context,
+      OUTPUT
+    > &
       GenerationOutputMetadata
   > {
     type Tools = TOOLS extends undefined ? AgentTools : TOOLS;
@@ -1225,16 +1234,10 @@ export class Agent<
   ): Promise<{ messages: MessageDoc[] }> {
     const previousResponseMessageCount =
       args.previousStep?.response.messages.length ?? 0;
-    if (
-      args.previousStep !== undefined &&
+    const watermark =
       args.step.response.messages.length < previousResponseMessageCount
-    ) {
-      throw new Error(
-        `saveStep: step.response.messages length (${args.step.response.messages.length}) is less than ` +
-          `previousStep.response.messages length (${previousResponseMessageCount}). ` +
-          `Ensure previousStep is from the immediately preceding step in the same generation loop.`,
-      );
-    }
+        ? 0
+        : previousResponseMessageCount;
     const { messages } = await serializeNewMessagesInStep(
       ctx,
       this.component,
@@ -1243,7 +1246,7 @@ export class Agent<
         provider: args.provider ?? getProviderName(this.options.languageModel),
         model: args.model ?? getModelName(this.options.languageModel),
       },
-      previousResponseMessageCount,
+      watermark,
     );
     const embeddings = await this.generateEmbeddings(
       ctx,
@@ -1556,7 +1559,9 @@ export class Agent<
        * When to stop generating text.
        * Defaults to the {@link Agent["options"].stopWhen} option.
        */
-      stopWhen?: StopCondition<AgentTools> | Array<StopCondition<AgentTools>>;
+      stopWhen?:
+        | StopCondition<AgentTools, Context>
+        | Array<StopCondition<AgentTools, Context>>;
     } & Options,
     overrides?: LanguageModelCallOptions & Omit<RequestOptions, 'timeout'>,
   ) {
@@ -1568,13 +1573,13 @@ export class Agent<
         const { userId, threadId, prompt, messages, maxSteps, ...rest } = args;
         const targetArgs = { userId, threadId };
         const llmArgs = {
-          stopWhen: spec?.stopWhen,
+          stopWhen: spec?.stopWhen as any,
           ...overrides,
           ...omit(rest, ["storageOptions", "contextOptions", "stream"]),
           messages: messages?.map(toModelMessage),
           prompt: Array.isArray(prompt) ? prompt.map(toModelMessage) : prompt,
           toolChoice: args.toolChoice as ToolChoice<AgentTools>,
-        } satisfies StreamingTextArgs<AgentTools>;
+        } as any;
         if (maxSteps) {
           llmArgs.stopWhen = stepCountIs(maxSteps);
         }
@@ -1602,7 +1607,8 @@ export class Agent<
             order: result.order,
             finishReason: await result.finishReason,
             warnings: await result.warnings,
-            savedMessageIds: result.savedMessages?.map((m) => m._id) ?? [],
+            savedMessageIds:
+              result.savedMessages?.map((m: MessageDoc) => m._id) ?? [],
           };
         } else {
           const res = await this.generateText<any>(
@@ -1617,7 +1623,8 @@ export class Agent<
             order: res.order,
             finishReason: res.finishReason,
             warnings: res.warnings,
-            savedMessageIds: res.savedMessages?.map((m) => m._id) ?? [],
+            savedMessageIds:
+              res.savedMessages?.map((m: MessageDoc) => m._id) ?? [],
           };
         }
       },

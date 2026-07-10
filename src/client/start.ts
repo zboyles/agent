@@ -208,11 +208,10 @@ export async function startGeneration<
   // The pending message is linked via the explicit `pendingMessageId`
   // parameter passed to addMessages in the save closure.
   // Track how many response messages we've already saved across steps.
-  // step.response.messages is cumulative — each step appends to it.
-  // We need to know which messages are new in each step to serialize
-  // only the new ones (important for tool approval flows where the SDK
-  // may add extra messages like approval tool-results).
+  // Newer AI SDK responses can be either cumulative across steps or per-step.
+  // We detect mode on the fly and only slice when cumulative.
   let previousResponseMessageCount = 0;
+  let responseMessagesAreCumulative: boolean | undefined;
 
   return {
     args: aiArgs,
@@ -249,9 +248,18 @@ export async function startGeneration<
           );
         } else {
           const allResponseMessages = toSave.step.response.messages;
-          const newResponseMessages = allResponseMessages.slice(
-            previousResponseMessageCount,
-          );
+          if (
+            responseMessagesAreCumulative !== false &&
+            allResponseMessages.length < previousResponseMessageCount
+          ) {
+            responseMessagesAreCumulative = false;
+          } else if (responseMessagesAreCumulative === undefined) {
+            responseMessagesAreCumulative = true;
+          }
+          const newResponseMessages =
+            responseMessagesAreCumulative === false
+              ? allResponseMessages
+              : allResponseMessages.slice(previousResponseMessageCount);
           previousResponseMessageCount = allResponseMessages.length;
           serialized = await serializeResponseMessages(
             ctx,
