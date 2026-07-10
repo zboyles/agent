@@ -168,7 +168,7 @@ function getParts(
     filename,
   };
   const imagePart: ImagePart | undefined = mediaType.startsWith("image/")
-    ? { type: "image", image: new URL(url), mediaType }
+    ? { type: 'file', data: new URL(url), mediaType }
     : undefined;
   return { filePart, imagePart };
 }

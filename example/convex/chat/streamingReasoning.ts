@@ -5,7 +5,7 @@ import { action } from "../_generated/server";
 import { v } from "convex/values";
 import { authorizeThreadAccess } from "../threads";
 import { storyAgent } from "../agents/story";
-import { stepCountIs, tool } from "ai";
+import { isStepCount, tool } from "ai";
 import { groq } from "@ai-sdk/groq";
 import z from "zod/v3";
 import { defaultConfig } from "../agents/config";
@@ -16,7 +16,7 @@ const streamingReasoningAgent = new Agent(components.agent, {
   name: "Streaming Reasoning Agent",
   instructions: "Think about the question and answer it.",
   ...defaultConfig,
-  stopWhen: stepCountIs(3),
+  stopWhen: isStepCount(3),
   languageModel: reasoningModel,
 });
 

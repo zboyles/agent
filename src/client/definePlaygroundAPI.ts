@@ -248,7 +248,7 @@ export function definePlaygroundAPI<DataModel extends GenericDataModel>(
       // Args passed through to generateText
       prompt: v.optional(v.string()),
       messages: v.optional(v.array(vMessage)),
-      system: v.optional(v.string()),
+      instructions: v.optional(v.string()),
     },
     handler: async (ctx: GenericActionCtx<DataModel>, args) => {
       const {
@@ -258,7 +258,7 @@ export function definePlaygroundAPI<DataModel extends GenericDataModel>(
         threadId,
         contextOptions,
         storageOptions,
-        system,
+        instructions: system,
         messages,
         ...rest
       } = args;
@@ -275,7 +275,7 @@ export function definePlaygroundAPI<DataModel extends GenericDataModel>(
         { threadId, userId },
         {
           ...rest,
-          ...(system ? { system } : {}),
+          ...(system ? { instructions } : {}),
           ...(messages ? { messages: messages.map(toModelMessage) } : {}),
         },
         { contextOptions, storageOptions, saveStreamDeltas: true },

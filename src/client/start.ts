@@ -1,6 +1,6 @@
 import {
-  stepCountIs,
-  type CallSettings,
+  isStepCount,
+  type LanguageModelCallOptions,
   type GenerateObjectResult,
   type IdGenerator,
   type LanguageModel,
@@ -8,6 +8,7 @@ import {
   type StepResult,
   type StopCondition,
   type ToolSet,
+  type RequestOptions,
 } from "ai";
 import {
   serializeResponseMessages,
@@ -101,7 +102,7 @@ export async function startGeneration<
     messages: ModelMessage[];
     prompt?: never;
     tools?: Tools;
-  } & CallSettings;
+  } & LanguageModelCallOptions & Omit<RequestOptions, 'timeout'>;
   order: number;
   stepOrder: number;
   userId: string | undefined;
@@ -192,7 +193,7 @@ export async function startGeneration<
     model,
     messages: context.messages,
     stopWhen:
-      args.stopWhen ?? (opts.maxSteps ? stepCountIs(opts.maxSteps) : undefined),
+      args.stopWhen ?? (opts.maxSteps ? isStepCount(opts.maxSteps) : undefined),
     tools,
   } as T & {
     model: LanguageModel;
@@ -200,7 +201,7 @@ export async function startGeneration<
     prompt?: never;
     tools?: Tools;
     _internal?: { generateId?: IdGenerator };
-  } & CallSettings;
+  } & LanguageModelCallOptions & Omit<RequestOptions, 'timeout'>;
   // NOTE: We intentionally do NOT override _internal.generateId here.
   // The AI SDK uses generateId() for many internal IDs (approval IDs,
   // tool execution IDs, message IDs, etc.) and they must be unique.

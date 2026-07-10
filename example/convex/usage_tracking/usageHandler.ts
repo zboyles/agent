@@ -52,8 +52,8 @@ export const insertRawUsage = internalMutation({
         promptTokens: args.usage.inputTokens ?? 0,
         completionTokens: args.usage.outputTokens ?? 0,
         totalTokens: args.usage.totalTokens ?? 0,
-        reasoningTokens: args.usage.reasoningTokens,
-        cachedInputTokens: args.usage.cachedInputTokens,
+        reasoningTokens: args.usage.outputTokenDetails.reasoningTokens,
+        cachedInputTokens: args.usage.inputTokenDetails.cacheReadTokens,
       },
     });
   },

@@ -210,7 +210,7 @@ function Play({ apiKey, api }: PlayProps) {
         prompt: message,
         contextOptions: context,
         storageOptions: storage,
-        system,
+        instructions,
       });
       return { text, messages };
       // Optionally, refresh messages or update UI here

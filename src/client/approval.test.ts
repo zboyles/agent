@@ -9,7 +9,7 @@ import type {
 import { anyApi, actionGeneric, mutationGeneric } from "convex/server";
 import { v } from "convex/values";
 import { defineSchema } from "convex/server";
-import { stepCountIs, type LanguageModelUsage } from "ai";
+import { isStepCount, type LanguageModelUsage } from "ai";
 import { components, initConvexTest } from "./setup.test.js";
 import { z } from "zod/v4";
 import { mockModel } from "./mockModel.js";
@@ -90,7 +90,7 @@ const approvalAgent = new Agent(components.agent, {
       [{ type: "text", text: "Done! I deleted test.txt." }],
     ],
   }),
-  stopWhen: stepCountIs(5),
+  stopWhen: isStepCount(5),
   usageHandler: testUsageHandler,
 });
 
@@ -111,7 +111,7 @@ const denialAgent = new Agent(components.agent, {
       [{ type: "text", text: "OK, I won't delete that file." }],
     ],
   }),
-  stopWhen: stepCountIs(5),
+  stopWhen: isStepCount(5),
   usageHandler: testUsageHandler,
 });
 
@@ -300,7 +300,7 @@ const multiToolAgent = new Agent(components.agent, {
       ],
     ],
   }),
-  stopWhen: stepCountIs(5),
+  stopWhen: isStepCount(5),
   usageHandler: testUsageHandler,
 });
 

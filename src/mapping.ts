@@ -235,8 +235,8 @@ export function serializeUsage(usage: LanguageModelUsage): Usage {
     promptTokens: usage.inputTokens ?? 0,
     completionTokens: usage.outputTokens ?? 0,
     totalTokens: usage.totalTokens ?? 0,
-    reasoningTokens: usage.reasoningTokens,
-    cachedInputTokens: usage.cachedInputTokens,
+    reasoningTokens: usage.outputTokenDetails.reasoningTokens,
+    cachedInputTokens: usage.inputTokenDetails.cacheReadTokens,
   };
 }
 
@@ -245,8 +245,8 @@ export function toModelMessageUsage(usage: Usage): LanguageModelUsage {
     inputTokens: usage.promptTokens,
     outputTokens: usage.completionTokens,
     totalTokens: usage.totalTokens,
-    reasoningTokens: usage.reasoningTokens,
-    cachedInputTokens: usage.cachedInputTokens,
+    reasoningTokens: usage.outputTokenDetails.reasoningTokens,
+    cachedInputTokens: usage.inputTokenDetails.cacheReadTokens,
     // These detail fields are required by LanguageModelUsage type but we don't
     // have the granular data, so we provide empty objects with undefined values.
     inputTokenDetails: {

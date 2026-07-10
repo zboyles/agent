@@ -21,7 +21,7 @@ import type {
 } from "convex/server";
 import { v } from "convex/values";
 import { defineSchema } from "convex/server";
-import { stepCountIs } from "ai";
+import { isStepCount } from "ai";
 import { components, initConvexTest } from "./setup.test.js";
 import { z } from "zod/v4";
 import { mockModel } from "./mockModel.js";
@@ -86,7 +86,7 @@ const saveStepAgent = new Agent(components.agent, {
       [{ type: "text", text: "done" }],
     ],
   }),
-  stopWhen: stepCountIs(5),
+  stopWhen: isStepCount(5),
 });
 
 export const replayStepsViaSaveStep = action({
@@ -350,7 +350,7 @@ describe("Agent option variations and normal behavior", () => {
       instructions: "Test instructions",
       contextOptions: { recentMessages: 5 },
       storageOptions: { saveMessages: "all" },
-      stopWhen: stepCountIs(2),
+      stopWhen: isStepCount(2),
       callSettings: { maxRetries: 1 },
       usageHandler: async () => {},
       rawRequestResponseHandler: async () => {},

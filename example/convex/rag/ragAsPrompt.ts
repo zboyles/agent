@@ -64,7 +64,7 @@ export const answerQuestionViaRAG = internalAction({
       // By providing both prompt and promptMessageId, it will use the prompt
       // in place of the promptMessageId's message, but still be considered
       // a response to the promptMessageId message (raw prompt).
-      { prompt, promptMessageId, system },
+      { prompt, promptMessageId, instructions },
       { saveStreamDeltas: true }, // to enable streaming the response via websockets.
     );
     // To show the context in the demo UI, we record the context used

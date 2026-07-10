@@ -5,7 +5,7 @@ import type {
   InferSchema,
 } from "@ai-sdk/provider-utils";
 import type {
-  CallSettings,
+  LanguageModelCallOptions,
   EmbeddingModel,
   GenerateObjectResult,
   GenerateTextResult,
@@ -16,6 +16,7 @@ import type {
   StreamTextResult,
   ToolChoice,
   ToolSet,
+  type RequestOptions,
 } from "ai";
 import { generateObject, generateText, stepCountIs, streamObject } from "ai";
 
@@ -420,7 +421,7 @@ export class Agent<
       prompt?: never;
       messages: ModelMessage[];
       tools?: TOOLS extends undefined ? AgentTools : TOOLS;
-    } & CallSettings;
+    } & LanguageModelCallOptions & Omit<RequestOptions, 'timeout'>;
     order: number;
     stepOrder: number;
     userId: string | undefined;
@@ -1557,7 +1558,7 @@ export class Agent<
        */
       stopWhen?: StopCondition<AgentTools> | Array<StopCondition<AgentTools>>;
     } & Options,
-    overrides?: CallSettings,
+    overrides?: LanguageModelCallOptions & Omit<RequestOptions, 'timeout'>,
   ) {
     return internalActionGeneric({
       args: vTextArgs,

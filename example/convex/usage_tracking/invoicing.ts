@@ -71,7 +71,7 @@ export const generateInvoices = internalMutation({
         const currentTokens = currentInvoice.usage[doc.provider][doc.model];
         currentTokens.inputTokens += tokens.inputTokens;
         currentTokens.outputTokens += tokens.outputTokens;
-        currentTokens.cachedInputTokens += tokens.cachedInputTokens;
+        currentTokens.inputTokenDetails.cacheReadTokens += tokens.inputTokenDetails.cacheReadTokens;
       }
     }
     if (result.isDone) {

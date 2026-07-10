@@ -150,7 +150,7 @@ export async function streamText<
       }
       return undefined;
     },
-    onStepFinish: async (step) => {
+    onStepEnd: async (step) => {
       steps.push(step);
       const createPendingMessage = await willContinue(steps, args.stopWhen);
       if (!createPendingMessage && streamer) {

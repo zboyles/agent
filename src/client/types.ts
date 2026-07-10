@@ -18,8 +18,9 @@ import type {
   streamText,
   StreamTextResult,
   ToolSet,
-  CallSettings,
+  LanguageModelCallOptions,
   generateObject,
+  type RequestOptions,
 } from "ai";
 
 export interface Output<_T = any, _P = any, _E = any> {
@@ -161,7 +162,7 @@ export type Config = {
    * This can be overridden at each generate/stream callsite on a per-field
    * basis. To clear a default setting, you'll need to pass `undefined`.
    */
-  callSettings?: CallSettings;
+  callSettings?: LanguageModelCallOptions & Omit<RequestOptions, 'timeout'>;
   /**
    * The maximum number of steps to allow for a single generation.
    *
