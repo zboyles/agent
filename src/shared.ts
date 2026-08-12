@@ -1,19 +1,7 @@
 import type {
-  FilePart,
-  ImagePart,
-  ReasoningPart,
-  ToolCallPart,
-  ToolResultPart,
-  ToolApprovalRequest,
-} from "@ai-sdk/provider-utils";
-import type {
   ModelMessage,
-  TextPart,
-  UIDataTypes,
-  UIMessagePart,
-  UITools,
 } from "ai";
-import type { Message, MessageContentParts } from "./validators.js";
+import type { Message } from "./validators.js";
 
 export const DEFAULT_RECENT_MESSAGES = 100;
 
@@ -47,17 +35,7 @@ export function extractText(message: Message | ModelMessage) {
 }
 
 export function joinText(
-  parts: (
-    | UIMessagePart<UIDataTypes, UITools>
-    | TextPart
-    | ImagePart
-    | FilePart
-    | ReasoningPart
-    | ToolCallPart
-    | ToolResultPart
-    | MessageContentParts
-    | ToolApprovalRequest
-  )[],
+  parts: any[],
 ) {
   return parts
     .filter((p) => p.type === "text")

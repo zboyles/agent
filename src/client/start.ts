@@ -1,6 +1,6 @@
 import {
-  stepCountIs,
-  type CallSettings,
+  isStepCount,
+  type LanguageModelCallOptions,
   type GenerateObjectResult,
   type IdGenerator,
   type LanguageModel,
@@ -8,8 +8,10 @@ import {
   type StepResult,
   type StopCondition,
   type ToolSet,
+  type RequestOptions,
 } from "ai";
 import {
+  selectNewResponseMessages,
   serializeResponseMessages,
   serializeObjectResult,
 } from "../mapping.js";
@@ -96,12 +98,13 @@ export async function startGeneration<
     },
 ): Promise<{
   args: T & {
-    system?: string;
+    instructions?: string;
     model: LanguageModel;
     messages: ModelMessage[];
     prompt?: never;
     tools?: Tools;
-  } & CallSettings;
+  } & LanguageModelCallOptions &
+    Omit<RequestOptions, "timeout">;
   order: number;
   stepOrder: number;
   userId: string | undefined;
@@ -192,7 +195,7 @@ export async function startGeneration<
     model,
     messages: context.messages,
     stopWhen:
-      args.stopWhen ?? (opts.maxSteps ? stepCountIs(opts.maxSteps) : undefined),
+      args.stopWhen ?? (opts.maxSteps ? isStepCount(opts.maxSteps) : undefined),
     tools,
   } as T & {
     model: LanguageModel;
@@ -200,18 +203,17 @@ export async function startGeneration<
     prompt?: never;
     tools?: Tools;
     _internal?: { generateId?: IdGenerator };
-  } & CallSettings;
+  } & LanguageModelCallOptions &
+    Omit<RequestOptions, "timeout">;
   // NOTE: We intentionally do NOT override _internal.generateId here.
   // The AI SDK uses generateId() for many internal IDs (approval IDs,
   // tool execution IDs, message IDs, etc.) and they must be unique.
   // The pending message is linked via the explicit `pendingMessageId`
   // parameter passed to addMessages in the save closure.
-  // Track how many response messages we've already saved across steps.
-  // step.response.messages is cumulative — each step appends to it.
-  // We need to know which messages are new in each step to serialize
-  // only the new ones (important for tool approval flows where the SDK
-  // may add extra messages like approval tool-results).
-  let previousResponseMessageCount = 0;
+  // AI SDK v7: each step's response.messages is per-step (not cumulative).
+  // Older SDKs made the array cumulative. Detect cumulative mode via prefix
+  // match so multi-step saves neither drop nor duplicate messages.
+  let previousResponseMessages: ModelMessage[] = [];
 
   return {
     args: aiArgs,
@@ -248,10 +250,11 @@ export async function startGeneration<
           );
         } else {
           const allResponseMessages = toSave.step.response.messages;
-          const newResponseMessages = allResponseMessages.slice(
-            previousResponseMessageCount,
+          const newResponseMessages = selectNewResponseMessages(
+            allResponseMessages,
+            previousResponseMessages,
           );
-          previousResponseMessageCount = allResponseMessages.length;
+          previousResponseMessages = allResponseMessages;
           serialized = await serializeResponseMessages(
             ctx,
             component,

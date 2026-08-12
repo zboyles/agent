@@ -3,6 +3,7 @@ import type {
   InferSchema,
   ModelMessage,
   ProviderOptions,
+  Context,
 } from "@ai-sdk/provider-utils";
 import type { JSONValue } from "@ai-sdk/provider";
 import type {
@@ -18,8 +19,9 @@ import type {
   streamText,
   StreamTextResult,
   ToolSet,
-  CallSettings,
+  LanguageModelCallOptions,
   generateObject,
+  RequestOptions,
 } from "ai";
 
 export interface Output<_T = any, _P = any, _E = any> {
@@ -45,15 +47,21 @@ import type { StreamingOptions } from "./streaming.js";
 import type { ComponentApi } from "../component/_generated/component.js";
 
 /**
- * Type-level check that ensures models are from AI SDK v6.
- * If a v5 model (LanguageModelV2) is passed, TypeScript will show the error message string.
+ * Type-level check that ensures models are compatible with AI SDK v7.
+ * If an older model is passed, TypeScript will show the error message string.
  */
-type AssertAISDKv6<T> = T extends { specificationVersion: "v3" }
+type AssertAISDKv7<T> = T extends { specificationVersion: "v3" }
   ? T
-  : "⚠️ @convex-dev/agent v0.6.0 requires AI SDK v6. Update your dependencies: npm install ai@^6.0.35 @ai-sdk/openai@^3.0.10 (or other provider). See: node_modules/@convex-dev/agent/MIGRATION.md";
+  : "⚠️ @convex-dev/agent requires AI SDK v7-compatible models (specificationVersion: v3). Update `ai` and provider packages. See: node_modules/@convex-dev/agent/MIGRATION.md";
 
 export type AgentPrompt = {
   /**
+   * Instructions to include in the prompt. Overwrites Agent constructor instructions.
+   * Preferred over {@link AgentPrompt.system} (AI SDK v7).
+   */
+  instructions?: string;
+  /**
+   * @deprecated Use {@link AgentPrompt.instructions} instead.
    * System message to include in the prompt. Overwrites Agent instructions.
    */
   system?: string;
@@ -97,7 +105,7 @@ export type AgentPrompt = {
 export type Config = {
   /**
    * The LLM model to use for generating / streaming text and objects.
-   * Requires AI SDK v6 (@ai-sdk/* packages v3.x).
+   * Requires AI SDK v7-compatible provider packages.
    *
    * @example
    * import { openai } from "@ai-sdk/openai"
@@ -105,7 +113,7 @@ export type Config = {
    *   languageModel: openai.chat("gpt-4o-mini"),
    * })
    */
-  languageModel?: AssertAISDKv6<LanguageModel>;
+  languageModel?: AssertAISDKv7<LanguageModel>;
   /**
    * @deprecated Use `embeddingModel` instead.
    */
@@ -161,7 +169,7 @@ export type Config = {
    * This can be overridden at each generate/stream callsite on a per-field
    * basis. To clear a default setting, you'll need to pass `undefined`.
    */
-  callSettings?: CallSettings;
+  callSettings?: LanguageModelCallOptions & Omit<RequestOptions, "timeout">;
   /**
    * The maximum number of steps to allow for a single generation.
    *
@@ -342,7 +350,9 @@ export type RawRequestResponseHandler = (
     threadId: string | undefined;
     agentName: string | undefined;
     request: LanguageModelRequestMetadata;
-    response: LanguageModelResponseMetadata;
+    response:
+      | LanguageModelResponseMetadata
+      | Omit<LanguageModelResponseMetadata, "messages">;
   },
 ) => void | Promise<void>;
 
@@ -354,7 +364,11 @@ export type TextArgs<
   OUTPUT extends Output<any, any, any> = never,
 > = Omit<
   Parameters<
-    typeof generateText<TOOLS extends undefined ? AgentTools : TOOLS, OUTPUT>
+    typeof generateText<
+      TOOLS extends undefined ? AgentTools : TOOLS,
+      Context,
+      OUTPUT
+    >
   >[0],
   "model" | "prompt" | "messages"
 > & {
@@ -371,7 +385,11 @@ export type StreamingTextArgs<
   OUTPUT extends Output<any, any, any> = never,
 > = Omit<
   Parameters<
-    typeof streamText<TOOLS extends undefined ? AgentTools : TOOLS, OUTPUT>
+    typeof streamText<
+      TOOLS extends undefined ? AgentTools : TOOLS,
+      Context,
+      OUTPUT
+    >
   >[0],
   "model" | "prompt" | "messages"
 > & {
@@ -491,7 +509,11 @@ export interface Thread<DefaultTools extends ToolSet> {
       TextArgs<TOOLS extends undefined ? DefaultTools : TOOLS, TOOLS, OUTPUT>,
     options?: Options,
   ): Promise<
-    GenerateTextResult<TOOLS extends undefined ? DefaultTools : TOOLS, OUTPUT> &
+    GenerateTextResult<
+      TOOLS extends undefined ? DefaultTools : TOOLS,
+      Context,
+      OUTPUT
+    > &
       ThreadOutputMetadata
   >;
 
@@ -529,7 +551,11 @@ export interface Thread<DefaultTools extends ToolSet> {
       saveStreamDeltas?: boolean | StreamingOptions;
     },
   ): Promise<
-    StreamTextResult<TOOLS extends undefined ? DefaultTools : TOOLS, OUTPUT> &
+    StreamTextResult<
+      TOOLS extends undefined ? DefaultTools : TOOLS,
+      Context,
+      OUTPUT
+    > &
       ThreadOutputMetadata
   >;
   /**

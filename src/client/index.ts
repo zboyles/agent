@@ -5,7 +5,7 @@ import type {
   InferSchema,
 } from "@ai-sdk/provider-utils";
 import type {
-  CallSettings,
+  LanguageModelCallOptions,
   EmbeddingModel,
   GenerateObjectResult,
   GenerateTextResult,
@@ -16,7 +16,9 @@ import type {
   StreamTextResult,
   ToolChoice,
   ToolSet,
+  RequestOptions,
 } from "ai";
+import type { Context } from "@ai-sdk/provider-utils";
 import { generateObject, generateText, stepCountIs, streamObject } from "ai";
 
 const MIGRATION_URL = "node_modules/@convex-dev/agent/MIGRATION.md";
@@ -41,9 +43,10 @@ import { convexToJson, v, type Value } from "convex/values";
 import type { threadFieldsSupportingPatch } from "../component/threads.js";
 import { type VectorDimension } from "../component/vector/tables.js";
 import {
+  selectNewResponseMessages,
   toModelMessage,
   serializeMessage,
-  serializeNewMessagesInStep,
+  serializeResponseMessages,
   serializeObjectResult,
 } from "../mapping.js";
 import { getModelName, getProviderName } from "../shared.js";
@@ -235,7 +238,8 @@ export class Agent<
       languageModel: LanguageModel;
       /**
        * The default system prompt to put in each request.
-       * Override per-prompt by passing the "system" parameter.
+       * Override per-prompt by passing the "instructions" parameter
+       * (or deprecated "system" alias).
        */
       instructions?: string;
       /**
@@ -250,8 +254,8 @@ export class Agent<
        * determines when to stop. Defaults to the AI SDK default.
        */
       stopWhen?:
-        | StopCondition<NoInfer<AgentTools>>
-        | Array<StopCondition<NoInfer<AgentTools>>>;
+        | StopCondition<NoInfer<AgentTools>, Context>
+        | Array<StopCondition<NoInfer<AgentTools>, Context>>;
     },
   ) {
     if (this.options.textEmbeddingModel && !this.options.embeddingModel) {
@@ -415,12 +419,13 @@ export class Agent<
     options?: Options & { userId?: string | null; threadId?: string },
   ): Promise<{
     args: T & {
-      system?: string;
+      instructions?: string;
       model: LanguageModel;
       prompt?: never;
       messages: ModelMessage[];
       tools?: TOOLS extends undefined ? AgentTools : TOOLS;
-    } & CallSettings;
+    } & LanguageModelCallOptions &
+      Omit<RequestOptions, "timeout">;
     order: number;
     stepOrder: number;
     userId: string | undefined;
@@ -442,7 +447,8 @@ export class Agent<
       {
         ...args,
         tools: (args.tools ?? this.options.tools) as Tools,
-        system: args.system ?? this.options.instructions,
+        instructions:
+          args.instructions ?? args.system ?? this.options.instructions,
         stopWhen: (args.stopWhen ?? this.options.stopWhen) as any,
       },
       {
@@ -480,7 +486,11 @@ export class Agent<
     generateTextArgs: AgentPrompt & TextArgs<AgentTools, TOOLS, OUTPUT>,
     options?: Options,
   ): Promise<
-    GenerateTextResult<TOOLS extends undefined ? AgentTools : TOOLS, OUTPUT> &
+    GenerateTextResult<
+      TOOLS extends undefined ? AgentTools : TOOLS,
+      Context,
+      OUTPUT
+    > &
       GenerationOutputMetadata
   > {
     const { args, promptMessageId, order, ...call } = await this.start(
@@ -490,21 +500,24 @@ export class Agent<
     );
 
     type Tools = TOOLS extends undefined ? AgentTools : TOOLS;
-    const steps: StepResult<Tools>[] = [];
+    const steps: StepResult<Tools, Context>[] = [];
     try {
-      const result = (await generateText<Tools, OUTPUT>({
+      const result = (await generateText<Tools, Context, OUTPUT>({
         ...args,
         prepareStep: async (options) => {
           const result = await generateTextArgs.prepareStep?.(options);
           call.updateModel(result?.model ?? options.model);
           return result;
         },
-        onStepFinish: async (step) => {
+        onStepEnd: async (step) => {
           steps.push(step);
           await call.save({ step }, await willContinue(steps, args.stopWhen));
-          return generateTextArgs.onStepFinish?.(step);
+          // AI SDK v7 prefers onStepEnd; onStepFinish remains a deprecated alias.
+          return (
+            generateTextArgs.onStepEnd ?? generateTextArgs.onStepFinish
+          )?.(step);
         },
-      })) as GenerateTextResult<Tools, OUTPUT>;
+      })) as GenerateTextResult<Tools, Context, OUTPUT>;
       const metadata: GenerationOutputMetadata = {
         promptMessageId,
         order,
@@ -554,7 +567,11 @@ export class Agent<
       saveStreamDeltas?: boolean | StreamingOptions;
     },
   ): Promise<
-    StreamTextResult<TOOLS extends undefined ? AgentTools : TOOLS, OUTPUT> &
+    StreamTextResult<
+      TOOLS extends undefined ? AgentTools : TOOLS,
+      Context,
+      OUTPUT
+    > &
       GenerationOutputMetadata
   > {
     type Tools = TOOLS extends undefined ? AgentTools : TOOLS;
@@ -565,7 +582,10 @@ export class Agent<
         ...streamTextArgs,
         model: streamTextArgs.model ?? this.options.languageModel,
         tools: (streamTextArgs.tools ?? this.options.tools) as Tools,
-        system: streamTextArgs.system ?? this.options.instructions,
+        instructions:
+          streamTextArgs.instructions ??
+          streamTextArgs.system ??
+          this.options.instructions,
         stopWhen: (streamTextArgs.stopWhen ?? this.options.stopWhen) as any,
       },
       {
@@ -1203,11 +1223,9 @@ export class Agent<
       step: StepResult<TOOLS>;
       /**
        * The previous step in the same generation loop, if any. Pass it so we
-       * can compute how many of `step.response.messages` are already saved.
-       * Omit for the first step. AI SDK v6's `step.response.messages` is
-       * cumulative across steps; without this, multi-step callers duplicate
-       * every prior message on every save — the exact failure mode this fix
-       * addresses, just at the public-API layer.
+       * can detect legacy cumulative `response.messages` arrays (prefix match)
+       * and avoid re-saving prior messages. AI SDK v7 is per-step, so omitting
+       * this is fine for v7 multi-step loops. Omit for the first step.
        */
       previousStep?: StepResult<TOOLS>;
       /**
@@ -1222,19 +1240,11 @@ export class Agent<
       provider?: string;
     },
   ): Promise<{ messages: MessageDoc[] }> {
-    const previousResponseMessageCount =
-      args.previousStep?.response.messages.length ?? 0;
-    if (
-      args.previousStep !== undefined &&
-      args.step.response.messages.length < previousResponseMessageCount
-    ) {
-      throw new Error(
-        `saveStep: step.response.messages length (${args.step.response.messages.length}) is less than ` +
-          `previousStep.response.messages length (${previousResponseMessageCount}). ` +
-          `Ensure previousStep is from the immediately preceding step in the same generation loop.`,
-      );
-    }
-    const { messages } = await serializeNewMessagesInStep(
+    const responseMessages = selectNewResponseMessages(
+      args.step.response.messages,
+      args.previousStep?.response.messages,
+    );
+    const { messages } = await serializeResponseMessages(
       ctx,
       this.component,
       args.step,
@@ -1242,7 +1252,7 @@ export class Agent<
         provider: args.provider ?? getProviderName(this.options.languageModel),
         model: args.model ?? getModelName(this.options.languageModel),
       },
-      previousResponseMessageCount,
+      responseMessages,
     );
     const embeddings = await this.generateEmbeddings(
       ctx,
@@ -1555,9 +1565,11 @@ export class Agent<
        * When to stop generating text.
        * Defaults to the {@link Agent["options"].stopWhen} option.
        */
-      stopWhen?: StopCondition<AgentTools> | Array<StopCondition<AgentTools>>;
+      stopWhen?:
+        | StopCondition<AgentTools, Context>
+        | Array<StopCondition<AgentTools, Context>>;
     } & Options,
-    overrides?: CallSettings,
+    overrides?: LanguageModelCallOptions & Omit<RequestOptions, "timeout">,
   ) {
     return internalActionGeneric({
       args: vTextArgs,
@@ -1567,13 +1579,13 @@ export class Agent<
         const { userId, threadId, prompt, messages, maxSteps, ...rest } = args;
         const targetArgs = { userId, threadId };
         const llmArgs = {
-          stopWhen: spec?.stopWhen,
+          stopWhen: spec?.stopWhen as any,
           ...overrides,
           ...omit(rest, ["storageOptions", "contextOptions", "stream"]),
           messages: messages?.map(toModelMessage),
           prompt: Array.isArray(prompt) ? prompt.map(toModelMessage) : prompt,
           toolChoice: args.toolChoice as ToolChoice<AgentTools>,
-        } satisfies StreamingTextArgs<AgentTools>;
+        } as any;
         if (maxSteps) {
           llmArgs.stopWhen = stepCountIs(maxSteps);
         }
@@ -1601,7 +1613,8 @@ export class Agent<
             order: result.order,
             finishReason: await result.finishReason,
             warnings: await result.warnings,
-            savedMessageIds: result.savedMessages?.map((m) => m._id) ?? [],
+            savedMessageIds:
+              result.savedMessages?.map((m: MessageDoc) => m._id) ?? [],
           };
         } else {
           const res = await this.generateText<any>(
@@ -1616,7 +1629,8 @@ export class Agent<
             order: res.order,
             finishReason: res.finishReason,
             warnings: res.warnings,
-            savedMessageIds: res.savedMessages?.map((m) => m._id) ?? [],
+            savedMessageIds:
+              res.savedMessages?.map((m: MessageDoc) => m._id) ?? [],
           };
         }
       },

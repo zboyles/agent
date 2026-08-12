@@ -245,9 +245,11 @@ export function definePlaygroundAPI<DataModel extends GenericDataModel>(
       // Options for generateText
       contextOptions: v.optional(vContextOptions),
       storageOptions: v.optional(vStorageOptions),
-      // Args passed through to generateText
+      // Args passed through to generateText / streamText
       prompt: v.optional(v.string()),
       messages: v.optional(v.array(vMessage)),
+      instructions: v.optional(v.string()),
+      /** @deprecated Use instructions instead. */
       system: v.optional(v.string()),
     },
     handler: async (ctx: GenericActionCtx<DataModel>, args) => {
@@ -258,6 +260,7 @@ export function definePlaygroundAPI<DataModel extends GenericDataModel>(
         threadId,
         contextOptions,
         storageOptions,
+        instructions,
         system,
         messages,
         ...rest
@@ -270,18 +273,19 @@ export function definePlaygroundAPI<DataModel extends GenericDataModel>(
       const namedAgent = agents.find(({ name }) => name === agentName);
       if (!namedAgent) throw new Error(`Unknown agent: ${agentName}`);
       const { agent } = namedAgent;
+      const promptOverride = instructions ?? system;
       const { text, steps } = await agent.streamText(
         ctx,
         { threadId, userId },
         {
           ...rest,
-          ...(system ? { system } : {}),
+          ...(promptOverride ? { instructions: promptOverride } : {}),
           ...(messages ? { messages: messages.map(toModelMessage) } : {}),
         },
         { contextOptions, storageOptions, saveStreamDeltas: true },
       );
       const outputMessages: MessageDoc[][] = [];
-      let previousResponseMessageCount = 0;
+      // AI SDK v7: each step's response.messages is per-step — always watermark 0.
       for (const step of await steps) {
         const { messages } = await serializeNewMessagesInStep(
           ctx,
@@ -291,9 +295,8 @@ export function definePlaygroundAPI<DataModel extends GenericDataModel>(
             model: getModelName(agent.options.languageModel),
             provider: getProviderName(agent.options.languageModel),
           },
-          previousResponseMessageCount,
+          0,
         );
-        previousResponseMessageCount = step.response.messages.length;
         outputMessages.push(
           messages.map((messageWithMetadata, i) => {
             return {

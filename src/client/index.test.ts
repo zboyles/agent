@@ -21,7 +21,7 @@ import type {
 } from "convex/server";
 import { v } from "convex/values";
 import { defineSchema } from "convex/server";
-import { stepCountIs } from "ai";
+import { isStepCount } from "ai";
 import { components, initConvexTest } from "./setup.test.js";
 import { z } from "zod/v4";
 import { mockModel } from "./mockModel.js";
@@ -86,7 +86,7 @@ const saveStepAgent = new Agent(components.agent, {
       [{ type: "text", text: "done" }],
     ],
   }),
-  stopWhen: stepCountIs(5),
+  stopWhen: isStepCount(5),
 });
 
 export const replayStepsViaSaveStep = action({
@@ -101,11 +101,14 @@ export const replayStepsViaSaveStep = action({
     const { threadId } = await saveStepAgent.createThread(ctx, {
       userId: "ss-replay",
     });
-    const { messageId: promptMessageId } = await saveStepAgent.saveMessage(ctx, {
-      threadId,
-      message: { role: "user", content: "echo hi" },
-      skipEmbeddings: true,
-    });
+    const { messageId: promptMessageId } = await saveStepAgent.saveMessage(
+      ctx,
+      {
+        threadId,
+        message: { role: "user", content: "echo hi" },
+        skipEmbeddings: true,
+      },
+    );
     let previousStep: (typeof steps)[number] | undefined;
     for (const step of steps) {
       await saveStepAgent.saveStep(ctx, {
@@ -219,6 +222,36 @@ export const fetchContextAction = action({
   },
 });
 
+const promptCaptureModel = mockModel({
+  content: [{ type: "text", text: "ok" }],
+});
+const promptCaptureAgent = new Agent(components.agent, {
+  name: "prompt-capture",
+  instructions: "default instructions",
+  languageModel: promptCaptureModel,
+});
+
+export const capturePromptInstructions = action({
+  args: {
+    instructions: v.optional(v.string()),
+    system: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    await promptCaptureAgent.generateText(
+      ctx,
+      { userId: "prompt-capture-user" },
+      {
+        prompt: "hello",
+        instructions: args.instructions,
+        system: args.system,
+      },
+      { storageOptions: { saveMessages: "none" } },
+    );
+    const prompt = promptCaptureModel.doGenerateCalls.at(-1)?.prompt ?? [];
+    return prompt.find((message) => message.role === "system")?.content ?? null;
+  },
+});
+
 const testApi: ApiFromModules<{
   fns: {
     createAndGenerate: typeof createAndGenerate;
@@ -232,6 +265,7 @@ const testApi: ApiFromModules<{
     generateObjectAction: typeof generateObjectAction;
     saveMessageMutation: typeof saveMessageMutation;
     replayStepsViaSaveStep: typeof replayStepsViaSaveStep;
+    capturePromptInstructions: typeof capturePromptInstructions;
   };
 }>["fns"] = anyApi["index.test"] as any;
 
@@ -247,6 +281,21 @@ describe("Agent thick client", () => {
     expect(result).toBeDefined();
     expect(result).toMatch(TEST_TEXT);
   });
+  test("prefers instructions while preserving the deprecated system alias", async () => {
+    const t = initConvexTest(schema);
+    await expect(
+      t.action(testApi.capturePromptInstructions, {
+        instructions: "primary",
+        system: "legacy",
+      }),
+    ).resolves.toBe("primary");
+    await expect(
+      t.action(testApi.capturePromptInstructions, { system: "legacy" }),
+    ).resolves.toBe("legacy");
+    await expect(t.action(testApi.capturePromptInstructions, {})).resolves.toBe(
+      "default instructions",
+    );
+  });
   test("saveStep with previousStep saves each step's new messages exactly once", async () => {
     const t = initConvexTest(schema);
     const res = await t.action(testApi.replayStepsViaSaveStep, {
@@ -260,13 +309,13 @@ describe("Agent thick client", () => {
     expect(toolCalls).toBe(1);
     expect(toolResults).toBe(1);
   });
-  test("saveStep without previousStep duplicates prior messages", async () => {
+  test("saveStep without previousStep does not duplicate prior messages", async () => {
     const t = initConvexTest(schema);
     const res = await t.action(testApi.replayStepsViaSaveStep, {
       withWatermark: false,
     });
     const toolCalls = res.contentTypes.filter((t) => t === "tool-call").length;
-    expect(toolCalls).toBeGreaterThan(1);
+    expect(toolCalls).toBe(1);
   });
 });
 
@@ -350,7 +399,7 @@ describe("Agent option variations and normal behavior", () => {
       instructions: "Test instructions",
       contextOptions: { recentMessages: 5 },
       storageOptions: { saveMessages: "all" },
-      stopWhen: stepCountIs(2),
+      stopWhen: isStepCount(2),
       callSettings: { maxRetries: 1 },
       usageHandler: async () => {},
       rawRequestResponseHandler: async () => {},

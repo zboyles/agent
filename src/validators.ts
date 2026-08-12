@@ -516,6 +516,9 @@ export const vStorageOptions = v.object({
 });
 
 const vPromptFields = {
+  /** Preferred system-prompt override (AI SDK v7). */
+  instructions: v.optional(v.string()),
+  /** @deprecated Use instructions instead. */
   system: v.optional(v.string()),
   prompt: v.optional(v.string()),
   messages: v.optional(v.array(vMessage)),
