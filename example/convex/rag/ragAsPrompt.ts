@@ -55,7 +55,7 @@ export const answerQuestionViaRAG = internalAction({
     // recommended instead of the markdown format below.
     const prompt = `# Context:\n\n ${context.text}\n\n---\n\n# Question:\n\n"""${rawPrompt}\n"""`;
     // Override the system prompt for demo purposes.
-    const system =
+    const instructions =
       "Answer the user's question and explain what context you used to answer it.";
 
     const result = await agent.streamText(

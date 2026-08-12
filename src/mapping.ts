@@ -1,4 +1,5 @@
 import {
+  isDeepEqualData,
   type UIMessage as AIMessage,
   type AssistantContent,
   type ModelMessage,
@@ -309,14 +310,48 @@ export async function serializeResponseMessages<TOOLS extends ToolSet>(
 }
 
 /**
+ * Select messages newly produced by this step for persistence.
+ *
+ * AI SDK v7: each step's `response.messages` is **per-step** (not cumulative).
+ * Older SDKs made the array cumulative across steps. Detect cumulative mode
+ * when `previousMessages` is a value-equal prefix of `currentMessages`,
+ * and slice only the new tail in that case.
+ *
+ * Always returns at least one message (empty assistant) so each step still
+ * anchors an order slot for `addMessages`.
+ */
+export function selectNewResponseMessages(
+  currentMessages: ModelMessage[],
+  previousMessages: ModelMessage[] = [],
+): ModelMessage[] {
+  let newMessages = currentMessages;
+  if (previousMessages.length > 0) {
+    const isCumulativePrefix =
+      currentMessages.length >= previousMessages.length &&
+      previousMessages.every((msg, i) =>
+        isDeepEqualData(currentMessages[i], msg),
+      );
+    if (isCumulativePrefix) {
+      newMessages = currentMessages.slice(previousMessages.length);
+    }
+  }
+  // Keep at least one message so the step still anchors an order slot —
+  // downstream `addMessages` relies on each step contributing a row even when
+  // the SDK produced no response messages.
+  return newMessages.length > 0
+    ? newMessages
+    : [{ role: "assistant" as const, content: [] }];
+}
+
+/**
  * Serialize the new response messages produced by this step.
  *
- * `step.response.messages` is cumulative across steps in AI SDK v6 — each
- * step's array contains all messages from prior steps too. Pass
- * `previousResponseMessageCount` (the prior step's `response.messages.length`,
- * or `0` for the first step) so we slice only the new tail. The parameter is
- * required: defaulting it would silently duplicate every prior message on
- * every multi-step save.
+ * Pass `previousResponseMessageCount` of `0` for AI SDK v7 (per-step
+ * `response.messages`) or the prior step's message count when handling a
+ * legacy cumulative array. Prefer {@link selectNewResponseMessages} when you
+ * have the previous step's full message array. The watermark is required:
+ * defaulting it would silently duplicate every prior message on every
+ * multi-step save of a cumulative array.
  */
 export async function serializeNewMessagesInStep<TOOLS extends ToolSet>(
   ctx: ActionCtx,
@@ -325,15 +360,21 @@ export async function serializeNewMessagesInStep<TOOLS extends ToolSet>(
   model: ModelOrMetadata | undefined,
   previousResponseMessageCount: number,
 ): Promise<{ messages: MessageWithMetadata[] }> {
-  const newMessages = step.response.messages.slice(previousResponseMessageCount);
-  // Keep at least one message in the output so the step still anchors an
-  // order slot — downstream `addMessages` relies on each step contributing a
-  // row even when AI SDK produced no response messages.
-  const messagesToSerialize: ModelMessage[] =
-    newMessages.length > 0
-      ? newMessages
-      : [{ role: "assistant" as const, content: [] }];
-  return serializeStepMessages(ctx, component, step, model, messagesToSerialize);
+  const messagesToSerialize = selectNewResponseMessages(
+    // Count-only path: slice by watermark. When the array is per-step (v7),
+    // callers must pass 0. When cumulative and length grew, this yields the
+    // new tail; when empty, selectNewResponseMessages anchors with [].
+    previousResponseMessageCount <= 0
+      ? step.response.messages
+      : step.response.messages.slice(previousResponseMessageCount),
+  );
+  return serializeStepMessages(
+    ctx,
+    component,
+    step,
+    model,
+    messagesToSerialize,
+  );
 }
 
 async function serializeStepMessages<TOOLS extends ToolSet>(
@@ -858,7 +899,11 @@ export function serializeDataOrUrl(
   if (dataOrUrl instanceof URL) {
     return dataOrUrl.toString();
   }
-  if (typeof dataOrUrl === "object" && dataOrUrl !== null && "type" in dataOrUrl) {
+  if (
+    typeof dataOrUrl === "object" &&
+    dataOrUrl !== null &&
+    "type" in dataOrUrl
+  ) {
     const fileData = dataOrUrl as any;
     if (fileData.type === "data" && "data" in fileData) {
       return serializeDataOrUrl(fileData.data as DataContent);
@@ -873,7 +918,11 @@ export function serializeDataOrUrl(
       return `provider-ref:${JSON.stringify(fileData.reference)}`;
     }
   }
-  if (typeof dataOrUrl === "object" && dataOrUrl !== null && !("buffer" in (dataOrUrl as any))) {
+  if (
+    typeof dataOrUrl === "object" &&
+    dataOrUrl !== null &&
+    !("buffer" in (dataOrUrl as any))
+  ) {
     return `provider-ref:${JSON.stringify(dataOrUrl)}`;
   }
   const bytes = dataOrUrl as Uint8Array;
@@ -883,17 +932,21 @@ export function serializeDataOrUrl(
   ) as ArrayBuffer;
 }
 
-export function toModelMessageDataOrUrl(
-  urlOrString: any,
-): any {
+export function toModelMessageDataOrUrl(urlOrString: any): any {
   if (urlOrString instanceof URL) {
     return urlOrString;
   }
   if (typeof urlOrString === "string") {
     if (urlOrString.startsWith("provider-ref:")) {
-      return JSON.parse(
-        urlOrString.slice("provider-ref:".length),
-      ) as Record<string, string>;
+      try {
+        return JSON.parse(urlOrString.slice("provider-ref:".length)) as Record<
+          string,
+          string
+        >;
+      } catch {
+        // Corrupted or user-provided string with this prefix — fall through.
+        return urlOrString;
+      }
     }
     if (
       urlOrString.startsWith("http://") ||

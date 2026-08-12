@@ -5,6 +5,7 @@ import {
   toModelMessageDataOrUrl,
   serializeMessage,
   serializeNewMessagesInStep,
+  selectNewResponseMessages,
   toModelMessage,
   serializeContent,
   toModelMessageContent,
@@ -63,6 +64,11 @@ describe("mapping", () => {
     const deser = toModelMessageDataOrUrl(ser);
     expect(deser).toBeInstanceOf(ArrayBuffer);
     expect(new Uint8Array(deser as ArrayBuffer)).toEqual(arr);
+  });
+
+  test("preserves malformed provider references as strings", () => {
+    const malformed = 'provider-ref:{"provider":';
+    expect(toModelMessageDataOrUrl(malformed)).toBe(malformed);
   });
 
   test("round-trip serialize/deserialize message", async () => {
@@ -276,7 +282,12 @@ describe("mapping", () => {
       {
         role: "assistant",
         content: [
-          { type: "tool-call", toolCallId: "c1", toolName: "search", input: {} },
+          {
+            type: "tool-call",
+            toolCallId: "c1",
+            toolName: "search",
+            input: {},
+          },
         ],
       },
       {
@@ -300,7 +311,12 @@ describe("mapping", () => {
       {
         role: "assistant",
         content: [
-          { type: "tool-call", toolCallId: "c2", toolName: "search", input: {} },
+          {
+            type: "tool-call",
+            toolCallId: "c2",
+            toolName: "search",
+            input: {},
+          },
         ],
       },
       {
@@ -401,11 +417,19 @@ describe("mapping", () => {
     test("returns all three messages when a step adds text + tool-call + tool-result", async () => {
       const stepMessages: ModelMessage[] = [
         ...step0Messages, // length 2
-        { role: "assistant", content: [{ type: "text", text: "Let me check..." }] },
+        {
+          role: "assistant",
+          content: [{ type: "text", text: "Let me check..." }],
+        },
         {
           role: "assistant",
           content: [
-            { type: "tool-call", toolCallId: "c3", toolName: "search", input: {} },
+            {
+              type: "tool-call",
+              toolCallId: "c3",
+              toolName: "search",
+              input: {},
+            },
           ],
         },
         {
@@ -466,10 +490,9 @@ describe("mapping", () => {
       expect(res.messages[0].message.content).toEqual([]);
     });
 
-    // AI SDK v6 makes step.response.messages cumulative across steps:
-    // step N's array contains all messages from steps 0..N. Without the
-    // previousResponseMessageCount watermark, every multi-step save duplicates
-    // all prior messages. These tests demonstrate the bug and the fix.
+    // Legacy cumulative arrays (pre-v7): step N contains all messages from
+    // steps 0..N. Without a watermark, multi-step saves duplicate prior
+    // messages. AI SDK v7 is per-step — pass watermark 0.
     describe("multi-step loop — previousStep watermark", () => {
       test("without watermark, step 2 re-saves all cumulative messages (demonstrates the bug)", async () => {
         // step2Messages = step0 (2 msgs) + step1 (1 msg) + step2 new (2 msgs) = 5 total
@@ -496,6 +519,55 @@ describe("mapping", () => {
         expect(contentTypes(res.messages[0].message)).toEqual(["tool-call"]);
         expect(contentTypes(res.messages[1].message)).toEqual(["tool-result"]);
       });
+    });
+  });
+
+  describe("selectNewResponseMessages", () => {
+    const msg = (text: string): ModelMessage => ({
+      role: "assistant",
+      content: [{ type: "text", text }],
+    });
+
+    test("first step returns all messages", () => {
+      const current = [msg("a"), msg("b")];
+      expect(selectNewResponseMessages(current)).toHaveLength(2);
+    });
+
+    test("per-step (no shared prefix) returns current messages", () => {
+      const previous = [msg("step0")];
+      const current = [msg("step1")];
+      expect(selectNewResponseMessages(current, previous)).toEqual(current);
+    });
+
+    test("cumulative prefix slices only the new tail", () => {
+      const m0 = msg("a");
+      const m1 = msg("b");
+      const m2 = msg("c");
+      const previous = [m0, m1];
+      const current = [m0, m1, m2];
+      expect(selectNewResponseMessages(current, previous)).toEqual([m2]);
+    });
+
+    test("cumulative prefix detection works with cloned messages", () => {
+      const previous = [msg("a"), msg("b")];
+      const current = [
+        structuredClone(previous[0]),
+        structuredClone(previous[1]),
+        msg("c"),
+      ];
+      expect(selectNewResponseMessages(current, previous)).toEqual([
+        current[2],
+      ]);
+    });
+
+    test("empty selection falls back to synthetic assistant", () => {
+      const m0 = msg("a");
+      const previous = [m0];
+      const current = [m0];
+      const result = selectNewResponseMessages(current, previous);
+      expect(result).toHaveLength(1);
+      expect(result[0].role).toBe("assistant");
+      expect(result[0].content).toEqual([]);
     });
   });
 

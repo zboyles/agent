@@ -195,7 +195,7 @@ function Play({ apiKey, api }: PlayProps) {
     agentName: string,
     context: ContextOptions | undefined,
     storage: StorageOptions | undefined,
-    system?: string,
+    instructions?: string,
   ): Promise<{ text: string; messages: MessageDoc[] } | undefined> => {
     if (!selectedThreadId || !selectedUserId) {
       toast({ title: "Select a thread and user first" });

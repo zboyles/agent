@@ -1,8 +1,14 @@
 import type { GenericId, Infer } from "convex/values";
-import { expectTypeOf, test } from "vitest";
+import { expect, expectTypeOf, test } from "vitest";
 import type { ContextOptions, StorageOptions } from "./client/types.js";
-import { vContextOptions, vMessageDoc, vStorageOptions } from "./validators.js";
+import {
+  vContextOptions,
+  vMessageDoc,
+  vStorageOptions,
+  vTextArgs,
+} from "./validators.js";
 import type { Doc } from "./component/_generated/dataModel.js";
+import { validate } from "convex-helpers/validators";
 
 expectTypeOf<Infer<typeof vContextOptions>>().toExtend<ContextOptions>();
 expectTypeOf<ContextOptions>().toExtend<Infer<typeof vContextOptions>>();
@@ -17,6 +23,15 @@ expectTypeOf<Infer<typeof vMessageDoc>>().toEqualTypeOf<MessageBasedOnSchema>();
 expectTypeOf<MessageBasedOnSchema>().toEqualTypeOf<Infer<typeof vMessageDoc>>();
 
 test("noop", () => {});
+
+test("text args accept instructions and the deprecated system alias", () => {
+  expect(
+    validate(vTextArgs, { prompt: "hello", instructions: "primary" }),
+  ).toBeTruthy();
+  expect(
+    validate(vTextArgs, { prompt: "hello", system: "legacy" }),
+  ).toBeTruthy();
+});
 
 type IdsToStrings<T> =
   T extends GenericId<string>

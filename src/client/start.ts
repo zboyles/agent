@@ -11,6 +11,7 @@ import {
   type RequestOptions,
 } from "ai";
 import {
+  selectNewResponseMessages,
   serializeResponseMessages,
   serializeObjectResult,
 } from "../mapping.js";
@@ -97,12 +98,13 @@ export async function startGeneration<
     },
 ): Promise<{
   args: T & {
-    system?: string;
+    instructions?: string;
     model: LanguageModel;
     messages: ModelMessage[];
     prompt?: never;
     tools?: Tools;
-  } & LanguageModelCallOptions & Omit<RequestOptions, 'timeout'>;
+  } & LanguageModelCallOptions &
+    Omit<RequestOptions, "timeout">;
   order: number;
   stepOrder: number;
   userId: string | undefined;
@@ -201,17 +203,17 @@ export async function startGeneration<
     prompt?: never;
     tools?: Tools;
     _internal?: { generateId?: IdGenerator };
-  } & LanguageModelCallOptions & Omit<RequestOptions, 'timeout'>;
+  } & LanguageModelCallOptions &
+    Omit<RequestOptions, "timeout">;
   // NOTE: We intentionally do NOT override _internal.generateId here.
   // The AI SDK uses generateId() for many internal IDs (approval IDs,
   // tool execution IDs, message IDs, etc.) and they must be unique.
   // The pending message is linked via the explicit `pendingMessageId`
   // parameter passed to addMessages in the save closure.
-  // Track how many response messages we've already saved across steps.
-  // Newer AI SDK responses can be either cumulative across steps or per-step.
-  // We detect mode on the fly and only slice when cumulative.
-  let previousResponseMessageCount = 0;
-  let responseMessagesAreCumulative: boolean | undefined;
+  // AI SDK v7: each step's response.messages is per-step (not cumulative).
+  // Older SDKs made the array cumulative. Detect cumulative mode via prefix
+  // match so multi-step saves neither drop nor duplicate messages.
+  let previousResponseMessages: ModelMessage[] = [];
 
   return {
     args: aiArgs,
@@ -248,19 +250,11 @@ export async function startGeneration<
           );
         } else {
           const allResponseMessages = toSave.step.response.messages;
-          if (
-            responseMessagesAreCumulative !== false &&
-            allResponseMessages.length < previousResponseMessageCount
-          ) {
-            responseMessagesAreCumulative = false;
-          } else if (responseMessagesAreCumulative === undefined) {
-            responseMessagesAreCumulative = true;
-          }
-          const newResponseMessages =
-            responseMessagesAreCumulative === false
-              ? allResponseMessages
-              : allResponseMessages.slice(previousResponseMessageCount);
-          previousResponseMessageCount = allResponseMessages.length;
+          const newResponseMessages = selectNewResponseMessages(
+            allResponseMessages,
+            previousResponseMessages,
+          );
+          previousResponseMessages = allResponseMessages;
           serialized = await serializeResponseMessages(
             ctx,
             component,
